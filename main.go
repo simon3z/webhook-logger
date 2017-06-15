@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"github.com/gorilla/mux"
 )
 
 // A NotificationsResponse contains a sequence of notifications for a given generation ID.
@@ -35,7 +36,8 @@ func (js JSONString) MarshalJSON() ([]byte, error) {
 }
 
 func serve(addr string, store notificationStore) error {
-	http.HandleFunc("/append", func(w http.ResponseWriter, r *http.Request) {
+	r := mux.NewRouter()
+	r.HandleFunc("/append", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			http.Error(w, fmt.Sprintf("invalid method %s", r.Method), http.StatusBadRequest)
 			return
@@ -59,7 +61,7 @@ func serve(addr string, store notificationStore) error {
 		}
 	})
 
-	http.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			http.Error(w, fmt.Sprintf("invalid method %s", r.Method), http.StatusBadRequest)
 			return
@@ -96,7 +98,7 @@ func serve(addr string, store notificationStore) error {
 		}
 	})
 
-	return http.ListenAndServe(addr, nil)
+	return http.ListenAndServe(addr, r)
 }
 
 func main() {
