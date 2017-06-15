@@ -8,13 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-)
-
-const (
-	bucketMetadata      = "metadata"
-	bucketNotifications = "notifications"
-
-	keyGenerationID = "generationID"
+	"time"
 )
 
 // A NotificationsResponse contains a sequence of notifications for a given generation ID.
@@ -26,8 +20,9 @@ type NotificationsResponse struct {
 // A Notification models a notification with its data and a sequential index that is valid
 // within a given generation ID.
 type Notification struct {
-	Index uint64     `json:"index"`
-	Data  JSONString `json:"data"`
+	Index     uint64      `json:"index"`
+	Timestamp time.Time   `json:"timestamp"`
+	Data      interface{} `json:"data"`
 }
 
 // A JSONString is a string that gets marshalled verbatim into JSON,
@@ -52,12 +47,13 @@ func serve(addr string, store notificationStore) error {
 			return
 		}
 
-		if err = json.Unmarshal(body, &map[string]interface{}{}); err != nil {
+		var data map[string]interface{}
+		if err = json.Unmarshal(body, &data); err != nil {
 			http.Error(w, fmt.Sprintf("body is not a valid JSON object: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		if err = store.append(body); err != nil {
+		if err = store.append(data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -106,12 +102,19 @@ func serve(addr string, store notificationStore) error {
 func main() {
 	storagePath := flag.String("storage-path", "notifications.db", "The path for storing notification data.")
 	listenAddr := flag.String("listen-address", ":9099", "The address to listen on for web requests.")
+	retention := flag.Duration("retention", 24*time.Hour, "The retention time after which stored notifications will be purged.")
+	gcInterval := flag.Duration("gc-interval", 10*time.Minute, "The interval at which to run garbage collection cycles to purge old entries.")
 	flag.Parse()
 
-	store, err := newBoltStore(*storagePath)
+	store, err := newBoltStore(&boltStoreOptions{
+		path:       *storagePath,
+		retention:  *retention,
+		gcInterval: *gcInterval,
+	})
 	if err != nil {
 		log.Fatalln("Error opening notification store:", err)
 	}
+	go store.start()
 	defer store.close()
 
 	log.Printf("Listening on %v...", *listenAddr)
