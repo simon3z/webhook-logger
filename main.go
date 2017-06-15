@@ -36,7 +36,7 @@ func (js JSONString) MarshalJSON() ([]byte, error) {
 	return []byte(js), nil
 }
 
-func serve(addr string, store notificationStore) error {
+func serve(addr string, store notificationStore, pushInterval time.Duration) error {
 	r := mux.NewRouter()
 	r.HandleFunc("/topics/{topic}", func(w http.ResponseWriter, r *http.Request) {
 		body, err := ioutil.ReadAll(r.Body)
@@ -64,8 +64,8 @@ func serve(addr string, store notificationStore) error {
 			return
 		}
 
-		genID := r.FormValue("generationID")
-		fromIdx := r.FormValue("fromIndex")
+		genID := r.URL.Query().Get("generationID")
+		fromIdx := r.URL.Query().Get("fromIndex")
 
 		if fromIdx == "" {
 			fromIdx = "0"
@@ -96,6 +96,9 @@ func serve(addr string, store notificationStore) error {
 		}
 	}).Methods("GET")
 
+	watchManager := newWatchManager(store, pushInterval)
+	r.HandleFunc("/{topic}/watch", watchManager.handleWatchRequest)
+
 	return http.ListenAndServe(addr, r)
 }
 
@@ -104,6 +107,7 @@ func main() {
 	listenAddr := flag.String("listen-address", ":9099", "The address to listen on for web requests.")
 	retention := flag.Duration("retention", 24*time.Hour, "The retention time after which stored notifications will be purged.")
 	gcInterval := flag.Duration("gc-interval", 10*time.Minute, "The interval at which to run garbage collection cycles to purge old entries.")
+	pushInterval := flag.Duration("push-interval", 5*time.Second, "The interval at which to push messages to websocket clients.")
 	flag.Parse()
 
 	store, err := newBoltStore(&boltStoreOptions{
@@ -118,5 +122,5 @@ func main() {
 	defer store.close()
 
 	log.Printf("Listening on %v...", *listenAddr)
-	log.Fatalln(serve(*listenAddr, store))
+	log.Fatalln(serve(*listenAddr, store, *pushInterval))
 }
