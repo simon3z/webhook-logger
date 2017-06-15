@@ -19,8 +19,8 @@ const (
 )
 
 type notificationStore interface {
-	append(interface{}) error
-	get(generationID string, fromIndex uint64) (*NotificationsResponse, error)
+	append(topic string, data interface{}) error
+	get(topic string, generationID string, fromIndex uint64) (*NotificationsResponse, error)
 	close() error
 }
 
@@ -102,9 +102,13 @@ func keyFromIndex(index uint64) []byte {
 	return []byte(strconv.FormatUint(index, 10))
 }
 
-func (bs *boltStore) append(data interface{}) error {
+func (bs *boltStore) append(topic string, data interface{}) error {
 	return bs.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketNotifications))
+		root := tx.Bucket([]byte(bucketNotifications))
+		b, err := root.CreateBucketIfNotExists([]byte(topic))
+		if err != nil {
+			return fmt.Errorf("error creating bucket for topic %q: %v", topic, err)
+		}
 		idx, err := b.NextSequence()
 		if err != nil {
 			return fmt.Errorf("error getting next sequence number: %v", err)
@@ -126,10 +130,16 @@ func (bs *boltStore) append(data interface{}) error {
 	})
 }
 
-func (bs *boltStore) get(generationID string, fromIndex uint64) (*NotificationsResponse, error) {
+func (bs *boltStore) get(topic string, generationID string, fromIndex uint64) (*NotificationsResponse, error) {
 	ns := []Notification{}
 	err := bs.db.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(bucketNotifications)).Cursor()
+		root := tx.Bucket([]byte(bucketNotifications))
+		b := root.Bucket([]byte(topic))
+		if b == nil {
+			// Topic doesn't exist yet, return it as an empty set.
+			return nil
+		}
+		c := b.Cursor()
 
 		var k, v []byte
 		if generationID == bs.generationID {
@@ -161,24 +171,29 @@ func (bs *boltStore) get(generationID string, fromIndex uint64) (*NotificationsR
 func (bs *boltStore) gc(olderThan time.Time) (int, error) {
 	var numDeleted int
 	return numDeleted, bs.db.Update(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(bucketNotifications)).Cursor()
+		root := tx.Bucket([]byte(bucketNotifications))
+		rootC := root.Cursor()
 
-		// For now, this goes through all entries and doesn't abort after the first
-		// encountered entry that should be kept, just in case there are time/date
-		// glitches on a machine and timestamps end up being out of order.
-		//
-		// TODO: Possibly reconsider this for performance reasons if the DB gets huge.
-		var n Notification
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			if err := json.Unmarshal(v, &n); err != nil {
-				return fmt.Errorf("unable to unmarshal notification: %v", err)
-			}
+		for topic, _ := rootC.First(); topic != nil; topic, _ = rootC.Next() {
+			c := root.Bucket(topic).Cursor()
 
-			if n.Timestamp.Before(olderThan) {
-				if err := c.Delete(); err != nil {
-					return fmt.Errorf("unable to delete notification: %v", err)
+			// For now, this goes through all entries and doesn't abort after the first
+			// encountered entry that should be kept, just in case there are time/date
+			// glitches on a machine and timestamps end up being out of order.
+			//
+			// TODO: Possibly reconsider this for performance reasons if the DB gets huge.
+			var n Notification
+			for k, v := c.First(); k != nil; k, v = c.Next() {
+				if err := json.Unmarshal(v, &n); err != nil {
+					return fmt.Errorf("unable to unmarshal notification: %v", err)
 				}
-				numDeleted++
+
+				if n.Timestamp.Before(olderThan) {
+					if err := c.Delete(); err != nil {
+						return fmt.Errorf("unable to delete notification: %v", err)
+					}
+					numDeleted++
+				}
 			}
 		}
 		return nil
