@@ -1,0 +1,4 @@
+FROM    golang:1.7.3
+WORKDIR /go/src/github.com/juliusv/webhook-logger
+ADD     . /go/src/github.com/juliusv/webhook-logger
+RUN     CGO_ENABLED=0 GOOS=linux go install -a -installsuffix cgo .
