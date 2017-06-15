@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
 	"github.com/gorilla/mux"
 )
 
@@ -37,12 +38,7 @@ func (js JSONString) MarshalJSON() ([]byte, error) {
 
 func serve(addr string, store notificationStore) error {
 	r := mux.NewRouter()
-	r.HandleFunc("/append", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			http.Error(w, fmt.Sprintf("invalid method %s", r.Method), http.StatusBadRequest)
-			return
-		}
-
+	r.HandleFunc("/topics/{topic}", func(w http.ResponseWriter, r *http.Request) {
 		body, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -55,13 +51,14 @@ func serve(addr string, store notificationStore) error {
 			return
 		}
 
-		if err = store.append(data); err != nil {
+		vars := mux.Vars(r)
+		if err = store.append(vars["topic"], data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	})
+	}).Methods("POST")
 
-	r.HandleFunc("/get", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/topics/{topic}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			http.Error(w, fmt.Sprintf("invalid method %s", r.Method), http.StatusBadRequest)
 			return
@@ -80,7 +77,8 @@ func serve(addr string, store notificationStore) error {
 			return
 		}
 
-		notifications, err := store.get(genID, idx)
+		vars := mux.Vars(r)
+		notifications, err := store.get(vars["topic"], genID, idx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -96,7 +94,7 @@ func serve(addr string, store notificationStore) error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	})
+	}).Methods("GET")
 
 	return http.ListenAndServe(addr, r)
 }
